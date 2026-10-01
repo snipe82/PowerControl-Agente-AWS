@@ -1,0 +1,73 @@
+service: agente-powercontrol-serverless
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: us-east-1
+  memorySize: 256
+  timeout: 60
+  environment:
+    POWERCONTROL_API_KEY: 'pc-antifraude-local-key-2026'
+    # Credenciales de GCP inyectadas para lectura de BigQuery
+    GCP_PROJECT_ID: 'bbva-bnpl-pe-mo-project'
+    GCP_CLIENT_EMAIL: 'bbva-bnpl-pe-powerpay-prod@bbva-bnpl-pe-mo-project.iam.gserviceaccount.com'
+    # Extracción segura y directa desde tu archivo físico local
+    GCP_PRIVATE_KEY: ${file(./credenciales_2.json):private_key}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+          Resource: 
+            - !GetAtt PowerControlStateTable.Arn
+            - !GetAtt PowerControlAlertedMerchantsTable.Arn
+
+functions:
+  orquestadorAntifraude:
+    handler: index.handler
+    description: Agente de ingesta BigQuery a PowerControl (RT/NRT y Alertas)
+    events:
+      # 1. Reloj de Ingesta Transaccional (Reemplaza a node-cron)
+      - schedule:
+          rate: rate(2 minutes)
+          name: Trigger-Ingesta-PowerControl
+          input:
+            taskType: 'SYNC_EVENTS'
+            
+      # 2. Reloj de Revisión de Impagos (Diario a las 00:00 Lima -> 05:00 UTC)
+      - schedule:
+          rate: cron(0 5 * * ? *)
+          name: Trigger-Alertas-PowerControl
+          input:
+            taskType: 'DAILY_ALERTS'
+
+resources:
+  Resources:
+    # Creación automática de la Tabla 1: Memoria de Sincronización
+    PowerControlStateTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: PowerControl_State
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    # Creación automática de la Tabla 2: Control Anti-Duplicados
+    PowerControlAlertedMerchantsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: PowerControl_AlertedMerchants
+        AttributeDefinitions:
+          - AttributeName: merchant_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: merchant_id
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST

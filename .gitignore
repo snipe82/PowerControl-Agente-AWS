@@ -1,0 +1,6 @@
+# Dependencias y temporales
+node_modules/
+.serverless/
+
+# Credenciales (Bloquea cualquier archivo que empiece con "credenciales")
+credenciales*.json
